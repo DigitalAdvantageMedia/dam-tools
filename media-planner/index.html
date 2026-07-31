@@ -154,6 +154,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;
 .mini span{font-size:10px;color:var(--ink-3);font-family:var(--mono);letter-spacing:.04em;
   text-transform:uppercase}
 .mini input,.mini select{padding:5px 7px;font-size:11.5px}
+.mrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:9px;margin-top:4px}
+.mcell{display:flex;flex-direction:column;gap:4px}
+.mcell .ml{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.mcell .ml em{font-style:normal;color:var(--accent);font-size:9px;letter-spacing:.04em}
+.mcell input{background:var(--raised);border:1px solid var(--rule-strong);border-radius:var(--r);
+  padding:7px 8px;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;width:100%}
+.mcell.set input{border-color:var(--accent);background:var(--accent-soft);color:var(--ink);font-weight:600}
+.mcell.locked input{opacity:.72}
+.mbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px;
+  padding-top:13px;border-top:1px solid var(--rule)}
+.mbar .sp{flex:1}
 .derived{display:flex;justify-content:space-between;gap:10px;padding:6px 9px;
   background:var(--sunken);border:1px solid var(--rule);border-radius:5px;
   font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.03em}
@@ -379,6 +391,13 @@ svg{display:block;max-width:100%;overflow:visible}
         <p class="fh">The budget your CPM and CPC came from. At this number the plan uses your rates
           untouched; spend more than it and costs rise, less and they ease. Typing a new budget above
           resets this; dragging the spend curve does not.</p></div>
+      <span class="lbl" style="display:block;margin:2px 0 7px">Enter channel spend as</span>
+      <div class="seg" id="unitSeg" role="group" aria-label="Channel spend unit">
+        <button data-u="pct">Share %</button>
+        <button data-u="abs">Rupees ₹</button>
+      </div>
+      <p class="fh" style="margin-top:7px">Shares always total 100%. In rupee mode you type each
+        line's monthly spend and the shares are worked out for you.</p>
       <p class="hintline" id="anchorNote"></p>
       <div class="alloc" id="allocBar"></div>
       <div id="chanList"></div>
@@ -498,7 +517,7 @@ const VERT = {
 function defaults(v){
   if(v==="ecommerce") return {
     vertical:"ecommerce", client:"E-commerce client", budget:300000, anchor:300000, growth:8, horizon:6,
-    aov:2500, r1:100, r2:100, target:800, improve:3,
+    aov:2500, r1:100, r2:100, target:800, improve:3, monthly:[], spendMode:'pct',
     channels:[                                       //  ⇒ CTR
       {n:"Meta — Conversions",  pct:35, cpm:200,  cpc:18, cr:1.2},   // 1.11%
       {n:"Meta — Retargeting",  pct:12, cpm:280,  cpc:14, cr:3.5},   // 2.00%
@@ -508,7 +527,7 @@ function defaults(v){
     ]};
   if(v==="realestate") return {
     vertical:"realestate", client:"Real estate client", budget:500000, anchor:500000, growth:5, horizon:6,
-    aov:20000000, r1:8, r2:20, target:75000, improve:4,
+    aov:20000000, r1:8, r2:20, target:75000, improve:4, monthly:[], spendMode:'pct',
     channels:[
       {n:"Meta — Lead form",    pct:45, cpm:300,  cpc:38, cr:2.6},   // 0.79%
       {n:"Meta — Retargeting",  pct:8,  cpm:380,  cpc:26, cr:4.5},   // 1.46%
@@ -518,7 +537,7 @@ function defaults(v){
     ]};
   return {
     vertical:"leadgen", client:"Lead gen client", budget:500000, anchor:500000, growth:6, horizon:6,
-    aov:20000, r1:25, r2:100, target:1000, improve:4,
+    aov:20000, r1:25, r2:100, target:1000, improve:4, monthly:[], spendMode:'pct',
     channels:[
       {n:"Meta — Conversions",  pct:42, cpm:175,  cpc:13, cr:7},     // 1.35%
       {n:"Meta — Retargeting",  pct:8,  cpm:210,  cpc:9,  cr:12},    // 2.33%
@@ -535,6 +554,10 @@ const ARCH_LABEL = {meta_convert:"scales steadily", meta_retarget:"saturates fas
 const archLabel = ch => ARCH_LABEL[inferArch(ch.n)] || "scales steadily";
 const chPlat = ch => inferPlatform(ch.n);
 const chCtr  = ch => (ch.cpc>0 ? ch.cpm/(1000*ch.cpc) : 0);   // CPM and CPC pin CTR
+// Shares are the source of truth; rupee entry is a view onto them.
+const pctTotal  = () => S.channels.reduce((t,c)=>t+(+c.pct||0),0) || 100;
+const chanShare = ch => (+ch.pct||0)/pctTotal()*100;
+const chanAmt   = ch => S.budget * chanShare(ch)/100;
 
 let S = defaults("leadgen");
 let scenarios = [null,null,null];
@@ -547,6 +570,17 @@ function loadMult(spend, knee, alpha){
   if(!knee || knee<=0 || alpha<=0) return 1;
   return clamp(Math.pow(spend/knee, alpha), 0.80, 5);
 }
+
+// Month 1 comes from the budget box. Later months use whatever the planner typed
+// into the month row, falling back to the growth rate when that month is untouched.
+function monthBudget(cfg, i){
+  if(i===0) return +cfg.budget||0;
+  const v = cfg.monthly && cfg.monthly[i];
+  if(v!=null && v!=='' && isFinite(+v)) return +v;
+  return (+cfg.budget||0) * Math.pow(1+(+cfg.growth||0)/100, i);
+}
+const overrideCount = cfg =>
+  (cfg.monthly||[]).filter((v,i)=>i>0 && i<cfg.horizon && v!=null && v!=='' && isFinite(+v)).length;
 
 // One "monthly improvement" figure stands in for the three drift fields in the
 // source sheets: CPM falls by i, CTR rises by i (so CPC falls faster than CPM),
@@ -583,8 +617,7 @@ function runLine(ch, spend, anchorSpend, monthIdx, cfg){
 
 // Whole plan, one month.
 function runMonth(cfg, monthIdx, totalBudget){
-  const tot = totalBudget!=null ? totalBudget
-            : cfg.budget * Math.pow(1+cfg.growth/100, monthIdx);
+  const tot = totalBudget!=null ? totalBudget : monthBudget(cfg, monthIdx);
   const sumPct = cfg.channels.reduce((s,c)=>s+(+c.pct||0),0) || 1;
   const anchor = +cfg.anchor>0 ? +cfg.anchor : cfg.budget;
   const lines = cfg.channels.map(ch => {
@@ -982,11 +1015,13 @@ function anchorNote(){
 // leave the Normalise button missing exactly when it was needed.
 function renderAlloc(){
   const sum=S.channels.reduce((s,c)=>s+(+c.pct||0),0);
-  const off=Math.abs(sum-100)>0.5;
+  const off=Math.abs(sum-100)>0.5 && S.spendMode!=='abs';
   const bar=$("#allocBar");
   bar.className="alloc"+(off?" off":"");
-  bar.innerHTML=`<span>Allocated ${sum.toFixed(1)}%</span>`
-    + (off?`<button id="normBtn">Normalise</button>`:`<span class="pill good">balanced</span>`);
+  bar.innerHTML = S.spendMode==='abs'
+    ? `<span>Allocated ${inr(S.budget)}</span><span class="pill good">across ${S.channels.length} lines</span>`
+    : `<span>Allocated ${sum.toFixed(1)}%</span>`
+      + (off?`<button id="normBtn">Normalise</button>`:`<span class="pill good">balanced</span>`);
   const nb=$("#normBtn");
   if(nb) nb.onclick=()=>{ const t=sum||1; S.channels.forEach(c=>c.pct=+((c.pct/t)*100).toFixed(1)); render(); };
 }
@@ -999,8 +1034,10 @@ function renderDeck(){
   $("#budgetRange").value = clamp(Math.log10(Math.max(10000,S.budget)/10000)/Math.log10(500)*100,0,100);
   $("#growth").value=S.growth; $("#horizon").value=S.horizon;
   $("#improve").value=S.improve; $("#anchor").value=Math.round(S.anchor);
-  const lastB=S.budget*Math.pow(1+S.growth/100, S.horizon-1);
-  $("#growthNote").textContent=`Month ${S.horizon} budget lands at ${inr(lastB)}.`;
+  const nOv=overrideCount(S);
+  $("#growthNote").innerHTML = nOv
+    ? `<b>${nOv} month${nOv>1?"s":""}</b> set by hand on the Month-on-month tab — those override this rate.`
+    : `Month ${S.horizon} budget lands at ${inr(monthBudget(S,S.horizon-1))}.`;
   $("#anchorNote").innerHTML=anchorNote();
 
   $("#econFields").innerHTML =
@@ -1017,6 +1054,7 @@ function renderDeck(){
   $("#target").oninput=e=>{S.target=+e.target.value||0; render(false);};
   V.econ.forEach(e=>{ const el=$("#"+e.k); if(el) el.oninput=ev=>{S[e.k]=+ev.target.value||0; render(false);}; });
 
+  [...$("#unitSeg").children].forEach(b=>b.setAttribute("aria-pressed", b.dataset.u===S.spendMode));
   renderAlloc();
 
   $("#chanList").innerHTML = S.channels.map((c,i)=>{
@@ -1032,8 +1070,13 @@ function renderDeck(){
           <p class="fh">Words in the name set the type. <b>brand</b>, <b>search</b>, <b>pmax</b> and
             <b>shopping</b> read as Google; <b>retargeting</b> marks the small warm audience. Everything
             else is treated as Meta prospecting.</p></div>
-        <div class="mini"><span>Share of budget %</span><input data-f="pct" type="number" step="1" value="${c.pct}">
-          <p class="fh">This line's cut of the monthly budget — ${inr(S.budget*(+c.pct||0)/100)} right now.</p></div>
+        ${S.spendMode==='abs'
+          ? `<div class="mini"><span>Monthly spend ₹</span>
+               <input data-f="amt" type="number" step="5000" value="${Math.round(chanAmt(c))}">
+               <p class="fh">Rupees on this line in month 1 — ${chanShare(c).toFixed(0)}% of the budget.</p></div>`
+          : `<div class="mini"><span>Share of budget %</span>
+               <input data-f="pct" type="number" step="1" value="${c.pct}">
+               <p class="fh">This line's cut of the monthly budget — ${inr(chanAmt(c))} right now.</p></div>`}
         <div class="row2">
           <div class="mini"><span>CPM ₹</span><input data-f="cpm" type="number" step="5" value="${c.cpm}">
             <p class="fh">Cost per 1,000 impressions.</p></div>
@@ -1061,8 +1104,20 @@ function renderDeck(){
     const i=+el.closest(".chan").dataset.i, f=el.dataset.f;
     el.oninput=e=>{
       const v=e.target.value;
-      S.channels[i][f] = f==="n" ? v : (+v||0);
-      render(f==="n");                 // a rename can change platform and elasticity
+      if(f==="amt"){
+        // Rupees typed here become this line's share of the month-1 budget,
+        // leaving the other lines' shares untouched.
+        const others=S.channels.reduce((t,c,j)=>j===i?t:t+(+c.pct||0),0);
+        const b=+S.budget||0;
+        const share=b>0 ? Math.min(0.98,(+v||0)/b) : 0;
+        S.channels[i].pct = others>0 ? (share*others)/(1-share) : share*100;
+        // keep the shares summing to 100 — ratios (and therefore the rupees) are preserved
+        const tot=S.channels.reduce((t,c)=>t+(+c.pct||0),0);
+        if(tot>0) S.channels.forEach(c=>c.pct=+((+c.pct||0)*100/tot).toFixed(1));
+      } else {
+        S.channels[i][f] = f==="n" ? v : (+v||0);
+      }
+      render(f==="n"||f==="amt");
     };
   });
   $("#chanList").querySelectorAll("[data-del]").forEach(b=>b.onclick=e=>{
@@ -1279,7 +1334,32 @@ function viewMonths(plan){
     ${two?`<td>${num(m.sales)}</td><td>${inr(m.cac)}</td>`:""}
     <td>${inr(m.revenue)}</td><td>${xx(m.roas)}</td></tr>`).join("");
 
+  const nOver = overrideCount(S);
+  const budgetRow = `
+  <div class="card noprint">
+    <div class="card-hd"><div><h2>Monthly budget plan</h2>
+      <p>Type the spend for any month. Blank months follow the ${S.growth>=0?"+":""}${S.growth}% growth
+        rate; anything you type overrides it. Every chart and KPI below reflects what is here.</p></div></div>
+    <div class="mrow">
+      ${plan.map((m,i)=>{
+        const set = i>0 && S.monthly[i]!=null && S.monthly[i]!=='' && isFinite(+S.monthly[i]);
+        return `<div class="mcell ${set?"set":""} ${i===0?"locked":""}">
+          <span class="ml">M${i+1}${i===0?` <em>base</em>`:(set?` <em>set</em>`:"")}</span>
+          <input type="number" step="25000" data-mb="${i}" value="${Math.round(m.spend)}"
+            aria-label="Month ${i+1} budget">
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="mbar">
+      <span class="lbl">${nOver? nOver+" month"+(nOver>1?"s":"")+" overridden" : "Following the growth rate"}</span>
+      <span class="sp"></span>
+      <button class="barbtn" id="mFlat">Flat — hold ${inr(S.budget)}</button>
+      <button class="barbtn" id="mClear"${nOver?"":" disabled"}>Reset to growth rate</button>
+    </div>
+  </div>`;
+
   return `
+  ${budgetRow}
   <div class="kpis">
     ${kpi("Total spend — "+plan.length+" mo", inr(totSpend), `${inr(m1.spend)} → ${inr(mn.spend)}`)}
     ${kpi("Total "+V.leadLabel.toLowerCase(), num(totLeads), `${num(m1.s0)} → ${num(mn.s0)} per month`)}
@@ -1289,7 +1369,7 @@ function viewMonths(plan){
   </div>
   <div class="grid2">
     <div class="card"><div class="card-hd"><div><h2>Spend by channel</h2>
-      <p>Budget grows ${S.growth}% a month; the mix holds.</p></div></div>
+      <p>${overrideCount(S) ? "Budgets set by hand where you typed them" : `Budget grows ${S.growth}% a month`}; the mix holds.</p></div></div>
       ${chartStack(plan, 620, 280)}
       <div class="legend">${plan[0].lines.map((l,i)=>`<div class="li"><i class="sw" style="background:${cvar(i)}"></i>${esc(l.ch.n)}</div>`).join("")}</div>
     </div>
@@ -1314,7 +1394,9 @@ function viewMonths(plan){
   </div>
   <div class="card">
     <div class="card-hd"><div><h2>Month-on-month detail</h2>
-      <p>Two forces pull against each other here: the budget changing ${S.growth>=0?"+":""}${S.growth}% a month pushes every line further past the rates it was quoted at, while ${S.improve}% monthly improvement pulls CPM and CPC back down as the campaigns learn.</p></div></div>
+      <p>Two forces pull against each other here: ${overrideCount(S)
+        ? "the monthly budgets you set above push each line past the rates it was quoted at whenever spend rises"
+        : `the budget changing ${S.growth>=0?"+":""}${S.growth}% a month pushes every line further past the rates it was quoted at`}, while ${S.improve}% monthly improvement pulls CPM and CPC back down as the campaigns learn.</p></div></div>
     <div class="tw"><table>
       <thead><tr><th>Period</th><th>Spend</th><th>Impressions</th><th>Clicks</th><th>CPC</th>
         <th>${esc(V.leadLabel)}</th><th>${esc(V.cplLabel)}</th>
@@ -1446,6 +1528,21 @@ function bindReadout(){
     S=JSON.parse(JSON.stringify(scenarios[+b.dataset.restore].cfg)); render();
   });
 
+  // per-month budget overrides
+  document.querySelectorAll("[data-mb]").forEach(el=>{
+    el.onchange=e=>{
+      const i=+el.dataset.mb, v=e.target.value;
+      if(i===0){ S.budget=+v||0; S.anchor=S.budget; }
+      else { S.monthly[i] = (v===""||!isFinite(+v)) ? null : +v; }
+      render();
+    };
+    el.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); el.blur(); } };
+  });
+  const mf=document.getElementById("mFlat");
+  if(mf) mf.onclick=()=>{ for(let i=1;i<S.horizon;i++) S.monthly[i]=S.budget; render(); };
+  const mc=document.getElementById("mClear");
+  if(mc) mc.onclick=()=>{ S.monthly=[]; render(); };
+
   // drag the marker on the response curve
   const g=document.querySelector('[data-drag]');
   if(g){
@@ -1482,6 +1579,10 @@ $("#growth").oninput=e=>{S.growth=+e.target.value||0; render(false);};
 $("#horizon").onchange=e=>{S.horizon=+e.target.value; render(false);};
 $("#improve").oninput=e=>{S.improve=+e.target.value||0; render(false);};
 $("#anchor").oninput=e=>{S.anchor=+e.target.value||0; render(false);};
+$("#unitSeg").onclick=e=>{
+  const b=e.target.closest("[data-u]"); if(!b) return;
+  S.spendMode=b.dataset.u; render();
+};
 $("#addChan").onclick=()=>{
   S.channels.push({n:"New line", pct:10, cpm:200, cpc:18, cr:2});
   render();

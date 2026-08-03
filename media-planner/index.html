@@ -739,6 +739,18 @@ function padDom(lo,hi){
   if(hi===lo) return [Math.min(0,lo*0.9), hi*1.1||1];
   const p=(hi-lo)*0.08; return [Math.max(0,lo-p), hi+p];
 }
+// For series that don't start at zero. Hugging the data makes a 30% move fill the
+// whole plot, which reads as falling off a cliff — so widen the domain until the
+// line only occupies `fill` of the height and the slope on screen matches the
+// size of the change. Not for zero-based charts: there the baseline is the point.
+function padDomFill(lo,hi,fill=0.5){
+  if(!isFinite(lo)||!isFinite(hi)) return [0,1];
+  if(hi===lo){ const p=Math.abs(hi)*0.2||1; return [Math.max(0,lo-p), hi+p]; }
+  const mid=(lo+hi)/2, half=(hi-lo)/2/clamp(fill,0.15,1);
+  let bot=mid-half, top=mid+half;
+  if(bot<0){ top-=bot; bot=0; }   // hold the span, slide it off the negative
+  return [bot, top];
+}
 function yAxis(F,dom,fmt){
   return ticks(dom[0],dom[1],5).map(t=>{
     const y=F.y(t,dom);
@@ -864,7 +876,7 @@ function chartMarginal(sw, cur, W, H){
 function chartMonths(plan, key, colour, fmt, W, H, label){
   const pts=plan.map((m,i)=>[i+1, m[key]]);
   const F=frame(W,H,{l:58,r:20,t:16,b:30});
-  const dx=[1, plan.length], dy=padDom(Math.min(...pts.map(p=>p[1])), Math.max(...pts.map(p=>p[1])));
+  const dx=[1, plan.length], dy=padDomFill(Math.min(...pts.map(p=>p[1])), Math.max(...pts.map(p=>p[1])));
   const id=nid();
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} by month">
   <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">

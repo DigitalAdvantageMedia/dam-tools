@@ -507,6 +507,10 @@ const VERT = {
             {key:"s2",label:"Bookings",short:"Bookings"}],
     leadLabel:"Relevant leads", saleLabel:"Bookings",
     cplLabel:"Cost per relevant lead", cacLabel:"Cost per booking",
+    // Mid-funnel cost-per. Only 3-stage verticals have one; where it exists it
+    // replaces ROAS in the month-on-month view, because a booking-cycle client
+    // reads the site-visit price long before they read a revenue multiple.
+    midLabel:"Cost per site visit",
     econ:[{k:"r1",label:"Rel. lead → site visit",hint:"%",pct:true,
             help:"Of the qualified enquiries, the share that actually turns up at site."},
           {k:"r2",label:"Site visit → booking",hint:"%",pct:true,
@@ -667,7 +671,7 @@ function runMonth(cfg, monthIdx, totalBudget){
   return {monthIdx, lines, spend, impr, clicks, s0, s1, s2, sales, revenue,
     cpm: impr>0?spend/impr*1000:0, cpc: clicks>0?spend/clicks:0,
     ctr: impr>0?clicks/impr:0, cvr: clicks>0?s0/clicks:0,
-    cpl: s0>0?spend/s0:0, cac: sales>0?spend/sales:0,
+    cpl: s0>0?spend/s0:0, cac: sales>0?spend/sales:0, cps1: s1>0?spend/s1:0,
     roas: spend>0?revenue/spend:0, profit: revenue-spend};
 }
 
@@ -1439,9 +1443,12 @@ function viewMonths(plan){
     :`<div class="card"><div class="card-hd"><div><h2>${esc(V.saleLabel)} per month</h2>
       <p>M1 ${num(m1.sales)} → M${plan.length} ${num(mn.sales)}</p></div></div>
       ${chartMonths(plan,"sales","var(--c2)",num,430,215,V.saleLabel)}</div>`}
-    <div class="card"><div class="card-hd"><div><h2>ROAS</h2>
+    ${V.midLabel?`<div class="card"><div class="card-hd"><div><h2>${esc(V.midLabel)}</h2>
+      <p>M1 ${inr(m1.cps1)} → M${plan.length} ${inr(mn.cps1)}</p></div></div>
+      ${chartMonths(plan,"cps1","var(--c4)",inr,430,215,V.midLabel)}</div>`
+    :`<div class="card"><div class="card-hd"><div><h2>ROAS</h2>
       <p>M1 ${xx(m1.roas)} → M${plan.length} ${xx(mn.roas)}</p></div></div>
-      ${chartMonths(plan,"roas","var(--c4)",xx,430,215,"ROAS")}</div>
+      ${chartMonths(plan,"roas","var(--c4)",xx,430,215,"ROAS")}</div>`}
   </div>
   <div class="card">
     <div class="card-hd"><div><h2>Month-on-month detail</h2>
